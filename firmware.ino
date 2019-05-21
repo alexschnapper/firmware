@@ -1,5 +1,5 @@
-#define USE_GPS     0
-#define USE_LORA    0
+#define USE_GPS     1
+#define USE_LORA    1
 #define USE_SDS011  1
 
 #include <TimerTCC0.h>
@@ -49,11 +49,64 @@ char buffer[256];
 boolean sendPacket = false;
 #endif
 
+const int ledFalse = 13;  // rot, definiere Variable für Pin 13
+const int ledSDS = 12;     // gelb, definiere Variable für Pin 12
+const int ledLORA = 11;     // gruen, definiere Variable für Pin 11
+const int ledGPS = 10;      // blau, definiere Variable für Pin 10
+const int ledWhite = 9;     // white LED
 
+int brightness = 0;    // how bright the LED is
+int fadeAmount = 5;    // how many points to fade the LED by
 
+int ledState = LOW;   // ledState used to set the LED
+unsigned long previousMillis = 0;   // will store last time LED was updated
+const long interval = 250; // interval at which to blink (ms)
+
+/**
+ * blinkwithoutDelayLED
+ * bwodLED
+ */
+void bwodLED(const int led) {
+  // check to see if it's time to blink the LED, that is, if the difference
+  // between the current time and last time you blinked the LED is bigger than
+  // the interval at which you want to blink the LED
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+    // if the LED is off turn it on and vice-versa
+    if (ledState == LOW) {
+      ledState = HIGH;
+    } else {
+      ledState = LOW;
+    }
+    // set the LED with the ledSTate of the variable.
+    digitalWrite(led, ledState);
+  }
+}
+
+void checkwire() {
+  // if no gps detected, check wiring, show red and blue leds
+  digitalWrite(ledFalse, HIGH);
+  digitalWrite(ledGPS, HIGH);
+}
+
+void nogpsfixintime() {
+  // Not able to get a fix in alloted time
+  digitalWrite(ledWhite, HIGH);
+  digitalWrite(ledGPS, HIGH);
+}
+
+// +++++++++++++++++++++++++++++++++ S E T U P +++++++++++++++++++++++++++++++++
 void setup() {
     SerialUSB.begin(115200);
     while(!SerialUSB);
+    
+    pinMode(ledFalse, OUTPUT);
+  pinMode(ledSDS, OUTPUT); 
+  pinMode(ledLORA, OUTPUT);
+  pinMode(ledGPS, OUTPUT);
+  pinMode(ledWhite, OUTPUT); 
 
 #if USE_SDS011
     sdsSensor.begin(SDS_PIN_RX, SDS_PIN_TX);
@@ -88,6 +141,7 @@ void setup() {
       {
         SerialUSB.println(F("No GPS detected: check wiring."));
         SerialUSB.println(gps.charsProcessed());
+        checkwire(); // on
         while(true);
       } 
       else if (millis() > 20000) {
@@ -98,6 +152,9 @@ void setup() {
 #endif
 
 #if USE_LORA
+    
+    digitalWrite(ledWhite, HIGH);
+    
     lora.init();
     lora.setDeviceDefault();    
 
@@ -109,7 +166,9 @@ void setup() {
     lora.getId(buffer, 256, 1);
     SerialUSB.print(buffer);
     
+    // void setId(char *DevAddr, char *DevEUI, char *AppEUI);
     lora.setId(DEV_ADDR, DEV_EUI, APP_EUI);
+    // setKey(char *NwkSKey, char *AppSKey, char *AppKey);
     lora.setKey(NWK_S_KEY, APP_S_KEY, APP_KEY);
 
     lora.setDeciveMode(LWABP);
@@ -134,6 +193,7 @@ void setup() {
     TimerTcc0.initialize(1000000); //1 second
     TimerTcc0.attachInterrupt(timerIsr);
 }
+// +++++++++++++++++++++++++++++++++ S E T U P +++++++++++++++++++++++++++++++++
 
 //interrupt routine
 void timerIsr(void) {
@@ -144,14 +204,17 @@ void timerIsr(void) {
     if (secSinceStart % 60 == 0) {
       SerialUSB.println("LORA sendPacket=true");
       sendPacket = true;
+      bwodLED(ledLORA);
     } else {
       sendPacket = false;
+      digitalWrite(ledLORA, LOW);
     }
 #endif
 
     // sec is forced to a range of 0-5, so we can decide to do something in either of those seconds
     sec = (sec + 1) % 6;   
     SerialUSB.println(sec);
+    bwodLED(ledWhite); // blink white LED every second = program running
 
 #if USE_GPS
     if (sec == 1) {
@@ -184,6 +247,9 @@ void timerIsr(void) {
 void loop(void) {
 #if USE_SDS011
   if(readSDS) {
+    digitalWrite(ledSDS, HIGH);    // works
+    delay(100);
+      
     // return code is 0, if new values were read, and 1 if there were no new values.
     sdsErrorCode = sdsSensor.read(&pm25, &pm10);
     if (!sdsErrorCode) {
@@ -194,24 +260,35 @@ void loop(void) {
         SerialUSB.println(sdsErrorCode);
     }
     readSDS = false;
+  } else {
+      // if readSDS = false, means not reading sds data
+      digitalWrite(ledSDS, LOW); // works
   }
 #endif
 
 #if USE_GPS
   if(readGPS) {
+      digitalWrite(ledGPS, HIGH);
       while (Serial.available() > 0){
           char currChar = Serial.read();
           gps.encode(currChar);
       }
+  } else {
+      // readGPS = false, when gps data should not be read
+      digitalWrite(ledGPS, LOW);
   }
 #endif
 
 #if USE_LORA
   if(sendPacket) {
+    digitalWrite(ledLORA, HIGH);
     SerialUSB.print("sendAndReceiveLoRaPacket(): ");
     SerialUSB.println(frame_counter);
     sendAndReceiveLoRaPacket();
     frame_counter += 1;
+  } else {
+    // sendPacket = false, when no packet should be sent
+    digitalWrite(ledLORA, LOW);
   }
 #endif
 }
@@ -225,10 +302,14 @@ void displayGPSInfo()
     SerialUSB.print(gps.location.lat(), 6);
     SerialUSB.print(F(","));
     SerialUSB.print(gps.location.lng(), 6);
+    digitalWrite(ledGPS, HIGH);
+    digitalWrite(ledFalse, LOW);
   }
   else
   {
     SerialUSB.print(F("INVALID"));
+    digitalWrite(ledFalse, HIGH);
+    digitalWrite(ledGPS, LOW);
   }
 
   SerialUSB.print(F("  Date/Time: "));
@@ -284,8 +365,13 @@ void sendAndReceiveLoRaPacket() {
     bool result = false;
     char payload[256];
     memset(payload, 0, 256);
-    String(frame_counter).toCharArray(payload, 256);
+    // String(frame_counter).toCharArray(payload, 256);
 
+    double lati = (gps.location.lat());
+    double longi = (gps.location.lng());
+    
+    String(String(lati,6) + "," + String(longi,6) + ";" + String(pm25) + "," + String(pm10)).toCharArray(payload,256); // works
+    
     result = lora.transferPacket(payload, 10);
 
     if(result) {
